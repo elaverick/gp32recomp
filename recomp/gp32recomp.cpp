@@ -383,6 +383,7 @@ void Analysis::explore(uint32_t a, bool thumb) {
             }
         } else if (in.flow == F_TAIL || in.flow == F_JUMP || in.flow == F_INDCALL) {
             unsigned rm = (raw >> 3) & 15;
+            if (rm == 15 && (raw & 0xFF00u) == 0x4700u && img.has((a + 4) & ~3u, 4)) add_func((a + 4) & ~3u, false); // bx pc: switch to ARM
             if (rm != 15 && (known & (1u << rm))) {
                 uint32_t t = val[rm];
                 bool tt = (raw & 0xFF00u) == 0x4700u ? (t & 1) : true;

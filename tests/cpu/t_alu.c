@@ -52,7 +52,7 @@ __attribute__((noinline)) static uint32_t sat(int32_t a, int32_t b) {
     int32_t lo = a < b ? a : b, hi = a > b ? a : b;
     if (s > 0x7FFFFFFF) s = 0x7FFFFFFF;
     if (s < -0x7FFFFFFF - 1) s = -0x7FFFFFFF - 1;
-    return (uint32_t)s ^ (uint32_t)(hi - lo) ^ (uint32_t)(a < 0 ? -a : a) ^ bits((uint32_t)b);
+    return (uint32_t)s ^ ((uint32_t)hi - (uint32_t)lo) ^ (a < 0 ? 0u - (uint32_t)a : (uint32_t)a) ^ bits((uint32_t)b);
 }
 
 int main(void) {

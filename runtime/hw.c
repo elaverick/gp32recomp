@@ -323,6 +323,41 @@ void gp32_wait_vsync(gp32_cpu *c) {
 }
 
 /* ---- sound ------------------------------------------------------------- */
+static FILE *wav_file;
+static uint32_t wav_bytes, wav_rate;
+
+static void wav_header(void) {
+    uint8_t h[44] = { 'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 2, 0 };
+    uint32_t v[2], i;
+    v[0] = wav_rate;
+    v[1] = wav_rate * 4;
+    for (i = 0; i < 8; i++) h[24 + i] = (uint8_t)(v[i / 4] >> (8 * (i % 4)));
+    h[32] = 4; h[34] = 16;
+    memcpy(h + 36, "data", 4);
+    for (i = 0; i < 4; i++) { h[4 + i] = (uint8_t)((wav_bytes + 36) >> (8 * i)); h[40 + i] = (uint8_t)(wav_bytes >> (8 * i)); }
+    fseek(wav_file, 0, SEEK_SET);
+    fwrite(h, 1, 44, wav_file);
+}
+
+void gp32_hw_shutdown(void) {
+    if (!wav_file) return;
+    wav_header();
+    fclose(wav_file);
+    wav_file = NULL;
+}
+
+static void audio_out(const int16_t *stereo, unsigned frames, uint32_t rate) {
+    if (gp32_opt.wav) {
+        unsigned i;
+        if (!wav_file && (wav_file = fopen(gp32_opt.wav, "wb")) != NULL) { wav_rate = rate; wav_bytes = 0; wav_header(); }
+        for (i = 0; wav_file && i < frames * 2; i++) {
+            fputc(stereo[i] & 0xFF, wav_file);
+            fputc((stereo[i] >> 8) & 0xFF, wav_file);
+        }
+        wav_bytes += frames * 4;
+    }
+    if (!gp32_opt.no_audio) plat_audio(stereo, (int)frames, (int)rate);
+}
 static uint32_t audio_rate(void) {
     uint32_t presc = ((hw.iispsr >> 5) & 31) + 1;
     double r = (double)gp32_hw_pclk() / presc / ((hw.iismod & 4) ? 384.0 : 256.0);
@@ -385,7 +420,7 @@ static void audio_pump(gp32_cpu *c) {
         out[frames * 2 + 1] = s[1];
         frames++;
     }
-    if (frames && !gp32_opt.no_audio) plat_audio(out, (int)frames, (int)rate);
+    if (frames) audio_out(out, frames, rate);
 }
 
 static void dma_trigger(gp32_cpu *c, unsigned n, uint32_t v) {
@@ -429,7 +464,7 @@ static void iis_fifo_write(gp32_cpu *c, uint32_t v) {
         s[0] = hw.fifo_l;
         s[1] = (int16_t)v;
         hw.fifo_have_l = 0;
-        if (!gp32_opt.no_audio) plat_audio(s, 1, (int)rate);
+        audio_out(s, 1, rate);
     }
     /* The FIFO drains at the sample rate; charge the time a real write would wait. */
     c->cycles -= (int64_t)(hw.ips / (rate * 2.0));

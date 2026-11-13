@@ -9,7 +9,7 @@
 #define TCNTO4 REG(0x15100040)
 #define LCDCON1 REG(0x14A00000)
 
-uint32_t *bios_tick_ptr(void);
+volatile uint32_t *bios_tick_ptr(void);
 void bios_install_irq(unsigned n, void (*handler)(void));
 void irq_enable(void);
 
@@ -24,7 +24,8 @@ __attribute__((interrupt("IRQ"), target("arm"))) static void timer4(void) {
 }
 
 int main(void) {
-    uint32_t spin = 0, h = 0, t0, t1, *tick = bios_tick_ptr();
+    uint32_t spin = 0, h = 0, t0, t1;
+    volatile uint32_t *tick = bios_tick_ptr();
     /* PCLK / 256 / 16, divided by 81: about 100 interrupts a second */
     TCFG0 |= 0xFF << 8;
     TCFG1 = (TCFG1 & ~(15u << 16)) | (3u << 16);

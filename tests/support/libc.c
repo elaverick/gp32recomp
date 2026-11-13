@@ -33,6 +33,12 @@ void __aeabi_memclr(void *d, size_t n) { memset(d, 0, n); }
 void __aeabi_memclr4(void *d, size_t n) { memset(d, 0, n); }
 void __aeabi_memclr8(void *d, size_t n) { memset(d, 0, n); }
 
+/* 64-bit helpers Thumb code calls; this file is built as ARM code, where they are open-coded */
+long long __aeabi_lmul(long long a, long long b) { return (long long)((unsigned long long)a * (unsigned long long)b); }
+long long __aeabi_llsl(long long v, int n) { return (long long)((unsigned long long)v << n); }
+long long __aeabi_llsr(long long v, int n) { return (long long)((unsigned long long)v >> n); }
+long long __aeabi_lasr(long long v, int n) { return v >> n; }
+
 /* quotient in r0, remainder in r1 */
 unsigned long long __aeabi_uidivmod(unsigned n, unsigned d) {
     unsigned q = 0, r = 0;

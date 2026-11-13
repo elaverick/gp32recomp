@@ -17,6 +17,7 @@ static void usage(const char *exe, const gp32_game *g) {
            "  --interp         run everything in the interpreter (for debugging)\n"
            "  --frames N       stop after N frames\n"
            "  --dump FILE      with --frames: save the last frame as a BMP\n"
+           "  --wav FILE       record the sound output to a WAV file\n"
            "  --keys SCRIPT    scripted input, \"frame:mask,frame:mask\"\n"
            "  --no-throttle    run as fast as possible\n"
            "  --trace          log firmware calls and odd memory accesses\n\n"
@@ -37,6 +38,7 @@ int gp32_main(int argc, char **argv, const gp32_game *game) {
         else if (!strcmp(a, "--frames") && v) { gp32_opt.frames = atoi(v); i++; }
         else if (!strcmp(a, "--dump") && v) { gp32_opt.dump = v; i++; }
         else if (!strcmp(a, "--smc") && v) { gp32_opt.smc = v; i++; }
+        else if (!strcmp(a, "--wav") && v) { gp32_opt.wav = v; i++; }
         else if (!strcmp(a, "--keys") && v) { gp32_opt.keys = v; i++; }
         else if (!strcmp(a, "--cpi") && v) { gp32_opt.cpi = atof(v); i++; }
         else if (!strcmp(a, "--no-throttle")) gp32_opt.no_throttle = 1;
@@ -55,6 +57,7 @@ int gp32_main(int argc, char **argv, const gp32_game *game) {
     gp32_hw_reset(&cpu);
     gp32_bios_reset(&cpu);
     gp32_run(&cpu);
+    gp32_hw_shutdown();
     gp32_smc_close();
     plat_shutdown();
     free(cpu.ram);

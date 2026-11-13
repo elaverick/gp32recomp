@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm ninja-build
+      - name: Build and test
+        run: sh tests/run.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test (MSVC, Win32 front end)
+        shell: bash
+        run: GP32_HEADLESS=OFF sh tests/run.sh
+      - name: Open a window and play one program to the end
+        shell: bash
+        run: ./build/tests/irq-arm/build/Release/irq_arm.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gp32recomp-windows
+          path: build/Release/gp32recomp.exe
