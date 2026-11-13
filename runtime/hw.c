@@ -99,7 +99,8 @@ void gp32_irq_request(gp32_cpu *c, unsigned n) {
 static void irq_deliver(gp32_cpu *c) {
     uint32_t pend = hw.irq[SRCPND] & ~hw.irq[INTMSK];
     unsigned n = 0;
-    if (!pend || (c->cpsr & GP32_PSR_I)) return;
+    if (c->cpsr & GP32_PSR_I) return;
+    if (gp32_bios_deliver(c) || !pend) return;
     while (!(pend & (1u << n))) n++;
     hw.irq[SRCPND] &= ~(1u << n);
     hw.irq[INTPND] = 0;
@@ -172,7 +173,7 @@ static void timer_fire(gp32_cpu *c, unsigned n) {
     }
 }
 
-/* A periodic interrupt the BIOS runs on behalf of the SDK (see bios.c). */
+/* A periodic timer the BIOS runs on behalf of the SDK (see bios.c). */
 void gp32_hle_timer(gp32_cpu *c, unsigned idx, uint32_t hz) {
     if (idx >= 4) return;
     if (!hz) { hw.ev_hle[idx] = -1; return; }
@@ -487,7 +488,7 @@ int gp32_event(gp32_cpu *c) {
         while (hw.tm[n].when >= 0 && hw.tm[n].when <= (double)now) timer_fire(c, n);
     for (n = 0; n < 4; n++)
         while (hw.ev_hle[n] >= 0 && hw.ev_hle[n] <= (double)now) {
-            gp32_irq_request(c, INT_TIMER0 + n);
+            gp32_bios_timer_fire(c, n);
             hw.ev_hle[n] += hw.hle_period[n];
         }
     while (hw.ev_rtc >= 0 && hw.ev_rtc <= (double)now) {

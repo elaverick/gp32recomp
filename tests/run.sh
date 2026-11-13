@@ -46,14 +46,18 @@ for t in alu mem flow hash edge irq; do
         ld.lld -T "$ROOT/tests/support/gp32.ld" "$T/crt0.o" "$T/$n.o" "$T/edge.o" "$T/libc.o" -o "$T/$n.elf"
         llvm-objcopy -O binary "$T/$n.elf" "$T/$n.gxb"
         "$RECOMP" "$T/$n.gxb" -o "$T/$n" --runtime "$ROOT/runtime" >/dev/null
+        t0=$(date +%s)
         cmake -S "$T/$n" -B "$T/$n/build" $GEN -DGP32_HEADLESS=$HEADLESS -DCMAKE_BUILD_TYPE=Release >/dev/null
+        t1=$(date +%s)
         cmake --build "$T/$n/build" --config Release >"$T/$n.buildlog" 2>&1 || { echo "FAIL  $n (build)"; tail -20 "$T/$n.buildlog"; fail=1; continue; }
+        t2=$(date +%s)
+        [ -n "$TIMING" ] && echo "      $n: configure $((t1 - t0)) s, build $((t2 - t1)) s"
         prog=$(exe "$T/$n/build" "${t}_$mode")
         for how in native interp; do
             flag=""
             [ $how = interp ] && flag="--interp"
             "$prog" --no-throttle --no-audio --frames 100000 $flag 2>&1 | tr -d '\r' >"$T/$n.$how.out" || true
-            if cmp -s "$T/$n.$how.out" "$expected"; then
+            if tr -d '\r' <"$expected" | cmp -s - "$T/$n.$how.out"; then
                 echo "ok    $n ($how)"
             else
                 echo "FAIL  $n ($how)"

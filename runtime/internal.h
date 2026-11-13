@@ -33,7 +33,6 @@ typedef struct gp32_options {
     int scale;
     int frames;          /* stop after this many frames (0 = run forever) */
     const char *dump;    /* write the last frame here as a BMP */
-    const char *smc;     /* SmartMedia image */
     const char *wav;     /* write everything played to this WAV file */
     const char *keys;    /* scripted input: "frame:mask,frame:mask" */
     int no_throttle;
@@ -77,10 +76,11 @@ void gp32_hle_timer(gp32_cpu *c, unsigned idx, uint32_t hz);
 void gp32_bios_reset(gp32_cpu *c);
 void gp32_bios_call(gp32_cpu *c);
 void gp32_bios_ms_tick(gp32_cpu *c);
+void gp32_bios_timer_fire(gp32_cpu *c, unsigned idx);
+int gp32_bios_deliver(gp32_cpu *c);
+void gp32_bios_report(void);
 
 /* smc.c */
-int gp32_smc_open(const char *path);
-void gp32_smc_close(void);
 void gp32_smc_gpio_write(unsigned port, uint32_t val);
 uint32_t gp32_smc_gpio_read(unsigned port, uint32_t latch);
 

@@ -161,8 +161,8 @@ void gp32_code_overwritten(gp32_cpu *c) {
         if (!changed) return;
     }
     c->native_ok = 0;
-    fprintf(stderr, "gp32: the program replaced its own code in memory; continuing in the interpreter.\n"
-                    "      (self-extracting images should be unpacked first, see gp32recomp --unpack)\n");
+    fprintf(stderr, "gp32: the program replaced its own code in memory (a packed or self-loading image);\n"
+                    "      continuing in the interpreter, which is slower but follows what is really there.\n");
 }
 
 /* ---- interpreter ------------------------------------------------------- */

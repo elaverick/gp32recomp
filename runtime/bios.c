@@ -9,11 +9,15 @@
 #include "internal.h"
 
 #define STUB(n) (GP32_BIOS_STUB_BASE + 4u * (n))
-enum { STUB_EXIT, STUB_FLIP, STUB_RET0, STUB_SMC0 };
+enum { STUB_EXIT, STUB_FLIP, STUB_IRQ_RET, STUB_SMC0 };
 
 static struct {
-    uint32_t timer_cb[4];
-    uint32_t path_len;
+    uint32_t timer_cb[4], timer_hz[4];
+    uint32_t timer_pending;
+    uint32_t timer_count[4];
+    int timers_running;
+    int in_callback;
+    uint32_t saved[6]; /* r0-r3, r12 and lr of the code a callback interrupted */
     int lcd_on;
 } bios;
 
@@ -123,6 +127,65 @@ static uint32_t keys_from_ports(uint32_t pb, uint32_t pe) {
     return ~((((~pb) >> 8) & 0xFF) | ((((~pe) >> 6) & 3) << 8));
 }
 
+/* ---- SWI 0x13: the firmware's software timers ------------------------------
+ * The SDK registers two: slot 0 is an ordinary function the firmware calls
+ * 1000 times a second, slot 1 is the SDK kernel's scheduler tick, entered
+ * like a raw interrupt 500 times a second.  The period is given in units of
+ * 50 ns (20000 and 40000 respectively), which makes GpTimerSet()'s own
+ * arithmetic come out at the tick rates its callers ask for. */
+static void swi_timer(gp32_cpu *c) {
+    uint32_t blk = c->r[0], cmd = gp32_rd32(c, blk), idx = gp32_rd32(c, blk + 4);
+    unsigned i;
+    if (gp32_opt.trace)
+        fprintf(stderr, "gp32:   timer block %X %X %X %X %X\n", cmd, idx, gp32_rd32(c, blk + 8), gp32_rd32(c, blk + 12), gp32_rd32(c, blk + 16));
+    switch (cmd) {
+    case 0:
+        for (i = 0; i < 4; i++) { gp32_hle_timer(c, i, 0); bios.timer_cb[i] = 0; }
+        bios.timers_running = 0;
+        bios.timer_pending = 0;
+        break;
+    case 1:
+        if (idx < 4) {
+            uint32_t period = gp32_rd32(c, blk + 12);
+            bios.timer_cb[idx] = gp32_rd32(c, blk + 8);
+            bios.timer_hz[idx] = period ? 20000000u / period : 0;
+            if (bios.timer_hz[idx] > 4000) bios.timer_hz[idx] = 4000;
+            if (bios.timers_running) gp32_hle_timer(c, idx, bios.timer_cb[idx] ? bios.timer_hz[idx] : 0);
+        }
+        break;
+    case 2:
+        bios.timers_running = 1;
+        for (i = 0; i < 4; i++) gp32_hle_timer(c, i, bios.timer_cb[i] ? bios.timer_hz[i] : 0);
+        break;
+    default: break;
+    }
+    c->r[0] = 0;
+}
+
+void gp32_bios_timer_fire(gp32_cpu *c, unsigned idx) {
+    bios.timer_pending |= 1u << idx;
+    gp32_force_event(c);
+}
+
+/* Run one pending timer callback; interrupts are known to be enabled. */
+int gp32_bios_deliver(gp32_cpu *c) {
+    unsigned idx;
+    if (!bios.timer_pending || bios.in_callback) return 0;
+    for (idx = 0; !(bios.timer_pending & (1u << idx)); idx++) {}
+    bios.timer_pending &= ~(1u << idx);
+    if (bios.timer_cb[idx] < GP32_RAM_BASE) return 0;
+    bios.timer_count[idx]++;
+    gp32_enter_irq(c, bios.timer_cb[idx]);
+    if (idx != 1) { /* a plain function: give it somewhere to return to */
+        memcpy(bios.saved, c->r, 16);
+        bios.saved[4] = c->r[12];
+        bios.saved[5] = c->r[14];
+        c->r[14] = STUB(STUB_IRQ_RET);
+        bios.in_callback = 1;
+    }
+    return 1;
+}
+
 void gp32_swi(gp32_cpu *c, uint32_t n) {
     if (gp32_opt.trace)
         fprintf(stderr, "gp32: swi %X r0=%08X r1=%08X r2=%08X r3=%08X lr=%08X\n", n, c->r[0], c->r[1], c->r[2], c->r[3], c->r[14]);
@@ -176,6 +239,7 @@ void gp32_swi(gp32_cpu *c, uint32_t n) {
         c->r[0] = 0;
         break;
     }
+    case 0x13: swi_timer(c); break;
     case 0x0F:
         switch (c->r[4]) {
         case 1: /* GpAppPathGet(&len) */
@@ -229,6 +293,14 @@ void gp32_bios_call(gp32_cpu *c) {
         gp32_wait_vsync(c);
         break;
     }
+    case STUB_IRQ_RET: /* a timer callback returned: resume what it interrupted */
+        memcpy(c->r, bios.saved, 16);
+        c->r[12] = bios.saved[4];
+        bios.in_callback = 0;
+        c->r[15] = bios.saved[5] - 4;
+        gp32_restore_cpsr(c);
+        c->r[15] &= (c->cpsr & GP32_PSR_T) ? ~1u : ~3u;
+        return;
     default: c->r[0] = 0; break;
     }
     if (lr & 1) { c->cpsr |= GP32_PSR_T; c->r[15] = lr & ~1u; }
@@ -236,6 +308,12 @@ void gp32_bios_call(gp32_cpu *c) {
 }
 
 void gp32_bios_ms_tick(gp32_cpu *c) { (void)c; }
+
+void gp32_bios_report(void) {
+    if (gp32_opt.trace)
+        fprintf(stderr, "gp32: firmware timer callbacks delivered: %u, %u, %u, %u\n", bios.timer_count[0], bios.timer_count[1], bios.timer_count[2],
+                bios.timer_count[3]);
+}
 
 void gp32_bios_reset(gp32_cpu *c) {
     memset(&bios, 0, sizeof(bios));

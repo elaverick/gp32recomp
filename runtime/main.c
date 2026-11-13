@@ -10,7 +10,6 @@ static void usage(const char *exe, const gp32_game *g) {
     printf("%s - GP32 program recompiled with gp32recomp\n\n"
            "usage: %s [options]\n"
            "  --scale N        window size multiplier (default 2)\n"
-           "  --smc FILE       SmartMedia card image to insert\n"
            "  --no-audio       do not open a sound device\n"
            "  --cpi X          CPU cycles charged per instruction (default 2.0;\n"
            "                   lower values make the emulated CPU faster)\n"
@@ -37,7 +36,6 @@ int gp32_main(int argc, char **argv, const gp32_game *game) {
         if (!strcmp(a, "--scale") && v) { gp32_opt.scale = atoi(v); i++; }
         else if (!strcmp(a, "--frames") && v) { gp32_opt.frames = atoi(v); i++; }
         else if (!strcmp(a, "--dump") && v) { gp32_opt.dump = v; i++; }
-        else if (!strcmp(a, "--smc") && v) { gp32_opt.smc = v; i++; }
         else if (!strcmp(a, "--wav") && v) { gp32_opt.wav = v; i++; }
         else if (!strcmp(a, "--keys") && v) { gp32_opt.keys = v; i++; }
         else if (!strcmp(a, "--cpi") && v) { gp32_opt.cpi = atof(v); i++; }
@@ -52,13 +50,12 @@ int gp32_main(int argc, char **argv, const gp32_game *game) {
     cpu.ram = (uint8_t *)malloc(GP32_RAM_SIZE);
     if (!cpu.ram) { fprintf(stderr, "gp32: out of memory\n"); return 1; }
     if (plat_init(game->name, gp32_opt.scale)) { fprintf(stderr, "gp32: cannot open a window\n"); return 1; }
-    if (gp32_opt.smc && gp32_smc_open(gp32_opt.smc)) fprintf(stderr, "gp32: cannot open card image %s\n", gp32_opt.smc);
     gp32_cpu_reset(&cpu);
     gp32_hw_reset(&cpu);
     gp32_bios_reset(&cpu);
     gp32_run(&cpu);
     gp32_hw_shutdown();
-    gp32_smc_close();
+    gp32_bios_report();
     plat_shutdown();
     free(cpu.ram);
     return gp32_exit_code();
