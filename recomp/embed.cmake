@@ -1,0 +1,17 @@
+# Turns the runtime sources into a C++ table so that gp32recomp can write a
+# complete, buildable project without needing its own source tree.
+set(out "// Generated from runtime/ - do not edit.\n#include \"recomp.h\"\n\n")
+set(table "")
+set(n 0)
+foreach(f ${FILES})
+  file(READ "${DIR}/${f}" hex HEX)
+  string(LENGTH "${hex}" len)
+  math(EXPR size "${len} / 2")
+  string(REGEX REPLACE "(..)" "0x\\1," bytes "${hex}")
+  string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n" bytes "${bytes}")
+  string(APPEND out "static const unsigned char file_${n}[] = {\n${bytes}0\n};\n")
+  string(APPEND table "    { \"${f}\", file_${n}, ${size}UL },\n")
+  math(EXPR n "${n} + 1")
+endforeach()
+string(APPEND out "\nconst RuntimeFile runtime_files[] = {\n${table}};\nconst unsigned runtime_file_count = ${n};\n")
+file(WRITE "${OUT}" "${out}")

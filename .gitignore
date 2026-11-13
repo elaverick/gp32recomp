@@ -1,0 +1,5 @@
+build/
+*_recomp/
+*.gxb
+*.fxe
+*.smc

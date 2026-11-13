@@ -1,0 +1,5 @@
+ticks 00000032
+irq.mode 00000001
+work.done 00000001
+elapsed.ok 00000001
+lcd.sweep 00000001
