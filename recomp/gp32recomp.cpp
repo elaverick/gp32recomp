@@ -673,7 +673,7 @@ struct Emitter {
             case F_INTERP: line("%sGP32_INTERP(0x%08Xu, 0x%08Xu);\n", ind, a, next); return;
             default: break;
             }
-            line("%sthumb_op(c, 0x%04Xu, 0x%08Xu);\n", ind, raw, a + 4);
+            line("%sthumb_g%u(c, 0x%04Xu, 0x%08Xu);\n", ind, thumb_group(raw), raw, a + 4);
             switch (in.flow) {
             case F_RET: line("%sreturn;\n", ind); break;
             case F_TAIL: line("%sGP32_TAIL();\n", ind); break;

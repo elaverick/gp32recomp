@@ -387,153 +387,197 @@ GP32_INLINE int thumb_classify(uint32_t i) {
     }
 }
 
-/* Executes every Thumb instruction except branches and SWI.
- * Writes c->r[15] for BX, MOV/ADD pc and POP {pc}. */
-GP32_INLINE void thumb_op(gp32_cpu *c, uint32_t insn, uint32_t pcv) {
-    unsigned rd = insn & 7, rs = (insn >> 3) & 7;
-    switch (insn >> 11) {
-    case 0: case 1: case 2: { /* LSL/LSR/ASR by immediate */
-        uint32_t sc = c->cf;
-        uint32_t res = gp32_shift_imm(c, c->r[rs], insn >> 11, (insn >> 6) & 31, &sc);
-        c->r[rd] = res;
-        gp32_nz(c, res);
-        c->cf = sc;
-        return;
+/* The instruction formats thumb_op() handles, one small handler each so that
+ * recompiled code only pulls in the one it needs. */
+GP32_INLINE unsigned thumb_group(uint32_t insn) {
+    static const unsigned char g[32] = { 0, 0, 0, 1, 2, 2, 2, 2, 3, 5, 6, 6, 7, 7, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 13, 13, 13, 13 };
+    unsigned top = (insn >> 11) & 31;
+    return top == 8 && (insn & 0x0400u) ? 4 : g[top];
+}
+
+GP32_INLINE uint32_t gp32_rd32_rot(gp32_cpu *c, uint32_t addr) {
+    uint32_t v = gp32_rd32(c, addr);
+    if (addr & 3) v = (v >> (8 * (addr & 3))) | (v << (32 - 8 * (addr & 3)));
+    return v;
+}
+
+GP32_INLINE void thumb_g0(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* LSL/LSR/ASR by immediate */
+    uint32_t sc = c->cf;
+    uint32_t res = gp32_shift_imm(c, c->r[(insn >> 3) & 7], insn >> 11, (insn >> 6) & 31, &sc);
+    (void)pcv;
+    c->r[insn & 7] = res;
+    gp32_nz(c, res);
+    c->cf = sc;
+}
+
+GP32_INLINE void thumb_g1(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* ADD/SUB register or 3-bit immediate */
+    uint32_t a = c->r[(insn >> 3) & 7], b = (insn & 0x0400u) ? ((insn >> 6) & 7) : c->r[(insn >> 6) & 7];
+    (void)pcv;
+    c->r[insn & 7] = (insn & 0x0200u) ? gp32_adc(c, a, ~b, 1, 1) : gp32_adc(c, a, b, 0, 1);
+}
+
+GP32_INLINE void thumb_g2(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* MOV/CMP/ADD/SUB 8-bit immediate */
+    unsigned r = (insn >> 8) & 7;
+    uint32_t imm = insn & 0xFF;
+    (void)pcv;
+    switch ((insn >> 11) & 3) {
+    case 0: c->r[r] = imm; gp32_nz(c, imm); break;
+    case 1: (void)gp32_adc(c, c->r[r], ~imm, 1, 1); break;
+    case 2: c->r[r] = gp32_adc(c, c->r[r], imm, 0, 1); break;
+    default: c->r[r] = gp32_adc(c, c->r[r], ~imm, 1, 1); break;
     }
-    case 3: { /* ADD/SUB register or 3-bit immediate */
-        uint32_t b = (insn & 0x0400u) ? ((insn >> 6) & 7) : c->r[(insn >> 6) & 7];
-        if (insn & 0x0200u) c->r[rd] = gp32_adc(c, c->r[rs], ~b, 1, 1);
-        else c->r[rd] = gp32_adc(c, c->r[rs], b, 0, 1);
-        return;
+}
+
+GP32_INLINE void thumb_g3(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* ALU operations */
+    unsigned rd = insn & 7;
+    uint32_t a = c->r[rd], b = c->r[(insn >> 3) & 7], res, sc = c->cf;
+    (void)pcv;
+    switch ((insn >> 6) & 15) {
+    case 0: res = a & b; break;
+    case 1: res = a ^ b; break;
+    case 2: res = gp32_shift_reg(a, 0, b, &sc); c->cf = sc; break;
+    case 3: res = gp32_shift_reg(a, 1, b, &sc); c->cf = sc; break;
+    case 4: res = gp32_shift_reg(a, 2, b, &sc); c->cf = sc; break;
+    case 5: c->r[rd] = gp32_adc(c, a, b, c->cf, 1); return;
+    case 6: c->r[rd] = gp32_adc(c, a, ~b, c->cf, 1); return;
+    case 7: res = gp32_shift_reg(a, 3, b, &sc); c->cf = sc; break;
+    case 8: gp32_nz(c, a & b); return;
+    case 9: c->r[rd] = gp32_adc(c, 0, ~b, 1, 1); return;
+    case 10: (void)gp32_adc(c, a, ~b, 1, 1); return;
+    case 11: (void)gp32_adc(c, a, b, 0, 1); return;
+    case 12: res = a | b; break;
+    case 13: res = a * b; break;
+    case 14: res = a & ~b; break;
+    default: res = ~b; break;
     }
-    case 4: case 5: case 6: case 7: { /* MOV/CMP/ADD/SUB 8-bit immediate */
-        unsigned r = (insn >> 8) & 7;
-        uint32_t imm = insn & 0xFF;
-        switch ((insn >> 11) & 3) {
-        case 0: c->r[r] = imm; gp32_nz(c, imm); break;
-        case 1: (void)gp32_adc(c, c->r[r], ~imm, 1, 1); break;
-        case 2: c->r[r] = gp32_adc(c, c->r[r], imm, 0, 1); break;
-        default: c->r[r] = gp32_adc(c, c->r[r], ~imm, 1, 1); break;
-        }
-        return;
+    c->r[rd] = res;
+    gp32_nz(c, res);
+}
+
+GP32_INLINE void thumb_g4(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* high registers and BX */
+    unsigned hd = (insn & 7) | ((insn >> 4) & 8), hs = (insn >> 3) & 15;
+    uint32_t b = hs == 15 ? pcv : c->r[hs];
+    switch ((insn >> 8) & 3) {
+    case 0:
+        if (hd == 15) c->r[15] = (pcv + b) & ~1u;
+        else c->r[hd] += b;
+        break;
+    case 1: (void)gp32_adc(c, hd == 15 ? pcv : c->r[hd], ~b, 1, 1); break;
+    case 2:
+        if (hd == 15) c->r[15] = b & ~1u;
+        else c->r[hd] = b;
+        break;
+    default:
+        if (b & 1) { c->r[15] = b & ~1u; }
+        else { c->cpsr &= ~GP32_PSR_T; c->r[15] = b & ~3u; }
+        break;
     }
-    case 8:
-        if (!(insn & 0x0400u)) { /* ALU operations */
-            uint32_t a = c->r[rd], b = c->r[rs], res, sc = c->cf;
-            switch ((insn >> 6) & 15) {
-            case 0: res = a & b; break;
-            case 1: res = a ^ b; break;
-            case 2: res = gp32_shift_reg(a, 0, b, &sc); c->cf = sc; break;
-            case 3: res = gp32_shift_reg(a, 1, b, &sc); c->cf = sc; break;
-            case 4: res = gp32_shift_reg(a, 2, b, &sc); c->cf = sc; break;
-            case 5: c->r[rd] = gp32_adc(c, a, b, c->cf, 1); return;
-            case 6: c->r[rd] = gp32_adc(c, a, ~b, c->cf, 1); return;
-            case 7: res = gp32_shift_reg(a, 3, b, &sc); c->cf = sc; break;
-            case 8: gp32_nz(c, a & b); return;
-            case 9: c->r[rd] = gp32_adc(c, 0, ~b, 1, 1); return;
-            case 10: (void)gp32_adc(c, a, ~b, 1, 1); return;
-            case 11: (void)gp32_adc(c, a, b, 0, 1); return;
-            case 12: res = a | b; break;
-            case 13: res = a * b; break;
-            case 14: res = a & ~b; break;
-            default: res = ~b; break;
-            }
-            c->r[rd] = res;
-            gp32_nz(c, res);
-        } else { /* high register operations and BX */
-            unsigned hd = rd | ((insn >> 4) & 8), hs = (insn >> 3) & 15;
-            uint32_t b = hs == 15 ? pcv : c->r[hs];
-            switch ((insn >> 8) & 3) {
-            case 0:
-                if (hd == 15) c->r[15] = (pcv + b) & ~1u;
-                else c->r[hd] += b;
-                break;
-            case 1: (void)gp32_adc(c, hd == 15 ? pcv : c->r[hd], ~b, 1, 1); break;
-            case 2:
-                if (hd == 15) c->r[15] = b & ~1u;
-                else c->r[hd] = b;
-                break;
-            default:
-                if (b & 1) { c->r[15] = b & ~1u; }
-                else { c->cpsr &= ~GP32_PSR_T; c->r[15] = b & ~3u; }
-                break;
-            }
-        }
-        return;
-    case 9: /* LDR rd, [pc, #imm] */
-        c->r[(insn >> 8) & 7] = gp32_rd32(c, (pcv & ~2u) + ((insn & 0xFF) << 2));
-        return;
-    case 10: case 11: { /* register-offset load/store */
-        uint32_t addr = c->r[rs] + c->r[(insn >> 6) & 7];
-        switch ((insn >> 9) & 7) {
-        case 0: gp32_wr32(c, addr, c->r[rd]); break;
-        case 1: gp32_wr16(c, addr, c->r[rd]); break;
-        case 2: gp32_wr8(c, addr, c->r[rd]); break;
-        case 3: c->r[rd] = (uint32_t)(int32_t)(int8_t)gp32_rd8(c, addr); break;
-        case 4: {
-            uint32_t v = gp32_rd32(c, addr);
-            if (addr & 3) v = (v >> (8 * (addr & 3))) | (v << (32 - 8 * (addr & 3)));
-            c->r[rd] = v;
-            break;
-        }
-        case 5: c->r[rd] = gp32_rd16(c, addr); break;
-        case 6: c->r[rd] = gp32_rd8(c, addr); break;
-        default: c->r[rd] = (uint32_t)(int32_t)(int16_t)gp32_rd16(c, addr); break;
-        }
-        return;
+}
+
+GP32_INLINE void thumb_g5(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* LDR rd, [pc, #imm] */
+    c->r[(insn >> 8) & 7] = gp32_rd32(c, (pcv & ~2u) + ((insn & 0xFF) << 2));
+}
+
+GP32_INLINE void thumb_g6(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* register-offset load/store */
+    unsigned rd = insn & 7;
+    uint32_t addr = c->r[(insn >> 3) & 7] + c->r[(insn >> 6) & 7];
+    (void)pcv;
+    switch ((insn >> 9) & 7) {
+    case 0: gp32_wr32(c, addr, c->r[rd]); break;
+    case 1: gp32_wr16(c, addr, c->r[rd]); break;
+    case 2: gp32_wr8(c, addr, c->r[rd]); break;
+    case 3: c->r[rd] = (uint32_t)(int32_t)(int8_t)gp32_rd8(c, addr); break;
+    case 4: c->r[rd] = gp32_rd32_rot(c, addr); break;
+    case 5: c->r[rd] = gp32_rd16(c, addr); break;
+    case 6: c->r[rd] = gp32_rd8(c, addr); break;
+    default: c->r[rd] = (uint32_t)(int32_t)(int16_t)gp32_rd16(c, addr); break;
     }
-    case 12: gp32_wr32(c, c->r[rs] + (((insn >> 6) & 31) << 2), c->r[rd]); return;
-    case 13: {
-        uint32_t addr = c->r[rs] + (((insn >> 6) & 31) << 2), v = gp32_rd32(c, addr);
-        if (addr & 3) v = (v >> (8 * (addr & 3))) | (v << (32 - 8 * (addr & 3)));
-        c->r[rd] = v;
-        return;
+}
+
+GP32_INLINE void thumb_g7(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* word/byte load/store, 5-bit offset */
+    unsigned rd = insn & 7;
+    uint32_t base = c->r[(insn >> 3) & 7], off = (insn >> 6) & 31;
+    (void)pcv;
+    switch ((insn >> 11) & 3) {
+    case 0: gp32_wr32(c, base + (off << 2), c->r[rd]); break;
+    case 1: c->r[rd] = gp32_rd32_rot(c, base + (off << 2)); break;
+    case 2: gp32_wr8(c, base + off, c->r[rd]); break;
+    default: c->r[rd] = gp32_rd8(c, base + off); break;
     }
-    case 14: gp32_wr8(c, c->r[rs] + ((insn >> 6) & 31), c->r[rd]); return;
-    case 15: c->r[rd] = gp32_rd8(c, c->r[rs] + ((insn >> 6) & 31)); return;
-    case 16: gp32_wr16(c, c->r[rs] + (((insn >> 6) & 31) << 1), c->r[rd]); return;
-    case 17: c->r[rd] = gp32_rd16(c, c->r[rs] + (((insn >> 6) & 31) << 1)); return;
-    case 18: gp32_wr32(c, c->r[13] + ((insn & 0xFF) << 2), c->r[(insn >> 8) & 7]); return;
-    case 19: c->r[(insn >> 8) & 7] = gp32_rd32(c, c->r[13] + ((insn & 0xFF) << 2)); return;
-    case 20: c->r[(insn >> 8) & 7] = (pcv & ~2u) + ((insn & 0xFF) << 2); return;
-    case 21: c->r[(insn >> 8) & 7] = c->r[13] + ((insn & 0xFF) << 2); return;
-    case 22: case 23:
-        if ((insn & 0x0F00u) == 0) { /* ADD sp, #imm */
-            uint32_t imm = (insn & 0x7F) << 2;
-            c->r[13] = (insn & 0x80u) ? c->r[13] - imm : c->r[13] + imm;
-        } else if (insn & 0x0800u) { /* POP */
-            uint32_t sp = c->r[13];
-            unsigned i;
-            for (i = 0; i < 8; i++)
-                if (insn & (1u << i)) { c->r[i] = gp32_rd32(c, sp); sp += 4; }
-            if (insn & 0x0100u) { c->r[15] = gp32_rd32(c, sp) & ~1u; sp += 4; }
-            c->r[13] = sp;
-        } else { /* PUSH */
-            uint32_t sp = c->r[13] - 4 * (gp32_popcount16(insn & 0xFF) + ((insn >> 8) & 1)), a = sp;
-            unsigned i;
-            for (i = 0; i < 8; i++)
-                if (insn & (1u << i)) { gp32_wr32(c, a, c->r[i]); a += 4; }
-            if (insn & 0x0100u) gp32_wr32(c, a, c->r[14]);
-            c->r[13] = sp;
-        }
-        return;
-    case 24: { /* STMIA rb!, {list} */
-        unsigned rb = (insn >> 8) & 7, i;
-        uint32_t a = c->r[rb];
+}
+
+GP32_INLINE void thumb_g8(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* halfword load/store */
+    uint32_t addr = c->r[(insn >> 3) & 7] + (((insn >> 6) & 31) << 1);
+    (void)pcv;
+    if (insn & 0x0800u) c->r[insn & 7] = gp32_rd16(c, addr);
+    else gp32_wr16(c, addr, c->r[insn & 7]);
+}
+
+GP32_INLINE void thumb_g9(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* sp-relative load/store */
+    uint32_t addr = c->r[13] + ((insn & 0xFF) << 2);
+    (void)pcv;
+    if (insn & 0x0800u) c->r[(insn >> 8) & 7] = gp32_rd32(c, addr);
+    else gp32_wr32(c, addr, c->r[(insn >> 8) & 7]);
+}
+
+GP32_INLINE void thumb_g10(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* ADD rd, pc/sp, #imm */
+    c->r[(insn >> 8) & 7] = ((insn & 0x0800u) ? c->r[13] : (pcv & ~2u)) + ((insn & 0xFF) << 2);
+}
+
+GP32_INLINE void thumb_g11(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* ADD sp, PUSH, POP */
+    unsigned i;
+    (void)pcv;
+    if ((insn & 0x0F00u) == 0) {
+        uint32_t imm = (insn & 0x7F) << 2;
+        c->r[13] = (insn & 0x80u) ? c->r[13] - imm : c->r[13] + imm;
+    } else if (insn & 0x0800u) {
+        uint32_t sp = c->r[13];
+        for (i = 0; i < 8; i++)
+            if (insn & (1u << i)) { c->r[i] = gp32_rd32(c, sp); sp += 4; }
+        if (insn & 0x0100u) { c->r[15] = gp32_rd32(c, sp) & ~1u; sp += 4; }
+        c->r[13] = sp;
+    } else {
+        uint32_t sp = c->r[13] - 4 * (gp32_popcount16(insn & 0xFF) + ((insn >> 8) & 1)), a = sp;
         for (i = 0; i < 8; i++)
             if (insn & (1u << i)) { gp32_wr32(c, a, c->r[i]); a += 4; }
-        c->r[rb] = a;
-        return;
+        if (insn & 0x0100u) gp32_wr32(c, a, c->r[14]);
+        c->r[13] = sp;
     }
-    case 25: { /* LDMIA rb!, {list} */
-        unsigned rb = (insn >> 8) & 7, i;
-        uint32_t a = c->r[rb];
+}
+
+GP32_INLINE void thumb_g12(gp32_cpu *c, uint32_t insn, uint32_t pcv) { /* STMIA / LDMIA rb!, {list} */
+    unsigned rb = (insn >> 8) & 7, i;
+    uint32_t a = c->r[rb];
+    (void)pcv;
+    if (insn & 0x0800u) {
         for (i = 0; i < 8; i++)
             if (insn & (1u << i)) { c->r[i] = gp32_rd32(c, a); a += 4; }
         if (!(insn & (1u << rb))) c->r[rb] = a;
-        return;
+    } else {
+        for (i = 0; i < 8; i++)
+            if (insn & (1u << i)) { gp32_wr32(c, a, c->r[i]); a += 4; }
+        c->r[rb] = a;
     }
-    default: return;
+}
+
+/* Executes any Thumb instruction except branches and SWI.
+ * Writes c->r[15] for BX, MOV/ADD pc and POP {pc}. */
+GP32_INLINE void thumb_op(gp32_cpu *c, uint32_t insn, uint32_t pcv) {
+    switch (thumb_group(insn)) {
+    case 0: thumb_g0(c, insn, pcv); break;
+    case 1: thumb_g1(c, insn, pcv); break;
+    case 2: thumb_g2(c, insn, pcv); break;
+    case 3: thumb_g3(c, insn, pcv); break;
+    case 4: thumb_g4(c, insn, pcv); break;
+    case 5: thumb_g5(c, insn, pcv); break;
+    case 6: thumb_g6(c, insn, pcv); break;
+    case 7: thumb_g7(c, insn, pcv); break;
+    case 8: thumb_g8(c, insn, pcv); break;
+    case 9: thumb_g9(c, insn, pcv); break;
+    case 10: thumb_g10(c, insn, pcv); break;
+    case 11: thumb_g11(c, insn, pcv); break;
+    case 12: thumb_g12(c, insn, pcv); break;
+    default: break;
     }
 }
 
